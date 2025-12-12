@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Memory — Lật Thẻ (4x4)</title>
+<style>
+  :root{
+    --card-size: 100px; /* kích thước thẻ (theo yêu cầu) */
+    --gap: 12px;
+    --bg: #111;
+    --card-back: #2c3e50;
+    --accent: #1abc9c;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background: linear-gradient(180deg,#0b1220 0%, #111425 100%);
+    color:#eee;
+    display:flex;
+    min-height:100vh;
+    align-items:flex-start;
+    justify-content:center;
+    padding:28px;
+  }
+
+  .container{
+    width: calc((var(--card-size) * 4) + (var(--gap) * 3) + 40px);
+    max-width:100%;
+  }
+
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:14px;
+    gap:12px;
+  }
+  h1{
+    font-size:20px;
+    margin:0;
+    letter-spacing:0.4px;
+  }
+  .controls{
+    display:flex;
+    gap:8px;
+    align-items:center;
+  }
+  .stat{
+    background: rgba(255,255,255,0.04);
+    padding:8px 10px;
+    border-radius:8px;
+    font-size:14px;
+  }
+  button{
+    background:var(--accent);
+    color:#05251f;
+    border:none;
+    padding:8px 12px;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:600;
+  }
+  .board{
+    display:grid;
+    grid-template-columns: repeat(4, var(--card-size));
+    grid-auto-rows: var(--card-size);
+    gap:var(--gap);
+    perspective: 1000px;
+    background: rgba(255,255,255,0.02);
+    padding:18px;
+    border-radius:12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+  }
+
+  .card{
+    width:var(--card-size);
+    height:var(--card-size);
+    position:relative;
+    transform-style: preserve-3d;
+    transition: transform 420ms cubic-bezier(.2,.9,.3,1);
+    cursor:pointer;
+    user-select:none;
+  }
+
+  .card.locked { pointer-events: none; }
+  .card.flipped{ transform: rotateY(180deg); }
+
+  .face{
+    position:absolute;
+    inset:0;
+    backface-visibility: hidden;
+    border-radius:8px;
+    overflow:hidden;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:48px;
+  }
+
+  .front{
+    transform: rotateY(180deg);
+    background: #ecf0f1;
+  }
+
+  .back{
+    background: linear-gradient(180deg,#34495e,#2c3e50);
+    color:#fff;
+    font-size:26px;
+    border: 2px solid rgba(255,255,255,0.04);
+  }
+
+  .face img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    display:block;
+  }
+
+  .footer {
+    margin-top:12px;
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    align-items:center;
+  }
+  .hint{ font-size:13px; color:#bcd; opacity:0.9 }
+  @media (max-width:520px){
+    :root{ --card-size: 80px; --gap:10px; }
+    .container{ width: calc((var(--card-size) * 4) + (var(--gap) * 3) + 20px); }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Memory — Lật thẻ (4×4)</h1>
+        <div style="font-size:13px; color:#bcd; margin-top:6px">
+          8 cặp — 16 thẻ — kích thước thẻ: <strong>100×100</strong>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="stat">Moves: <span id="moves">0</span></div>
+        <div class="stat">Time: <span id="time">00:00</span></div>
+        <button id="restartBtn">Restart</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="board" class="board" aria-label="Game board"></div>
+      <div class="footer">
+        <div class="hint">Click 2 thẻ để so sánh. Dùng ảnh trong thư mục <code>images/</code> (back.png, 1.png … 8.png) hoặc game sẽ dùng emoji.</div>
+        <div style="opacity:0.9">Made with plain HTML/CSS/JS</div>
+      </div>
+    </main>
+  </div>
+
+<script>
+/*
+  Memory game (4x4) - 8 pairs
+  - If images exist in images/back.png and images/1.png..8.png, load them.
+  - Otherwise use a fallback emoji set.
+*/
+
+const PAIRS = 8;
+const SIZE = PAIRS * 2;
+const boardEl = document.getElementById('board');
+const movesEl = document.getElementById('moves');
+const timeEl = document.getElementById('time');
+const restartBtn = document.getElementById('restartBtn');
+
+let cards = [];       // shuffled card indexes (0..7 duplicated)
+let revealed = [];    // boolean
+let first = -1;
+let lock = false;
+let moves = 0;
+let matched = 0;
+
+// fallback emojis (8 distinct)
+const EMOJI = ['🍎','🍌','🍇','🍒','🍉','🍓','🍑','🥝'];
+
+// try load images: check if images/back.png exists by requesting it
+let hasImages = false;
+function checkImage(path){
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = path + '?_=' + Date.now();
+  });
+}
+
+async function init(){
+  // check if images/back.png exists
+  hasImages = await checkImage('images/back.png');
+  // prepare cards
+  cards = [];
+  for(let i=0;i<PAIRS;i++){ cards.push(i); cards.push(i); }
+  shuffle(cards);
+  revealed = Array(SIZE).fill(false);
+  first = -1;
+  lock = false;
+  moves = 0;
+  matched = 0;
+  movesEl.textContent = moves;
+  resetTimer();
+  renderBoard();
+}
+
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+}
+
+function renderBoard(){
+  boardEl.innerHTML = '';
+  for(let i=0;i<SIZE;i++){
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.dataset.index = i;
+
+    // front (face up)
+    const front = document.createElement('div');
+    front.className = 'face front';
+    if(hasImages){
+      const img = document.createElement('img');
+      img.src = `images/${cards[i]+1}.png`;
+      img.alt = 'card';
+      front.appendChild(img);
+    } else {
+      front.style.background = '#fff';
+      front.style.color = '#222';
+      front.style.fontSize = '48px';
+      front.textContent = EMOJI[cards[i]];
+    }
+
+    // back (face down)
+    const back = document.createElement('div');
+    back.className = 'face back';
+    if(hasImages){
+      const img = document.createElement('img');
+      img.src = 'images/back.png';
+      img.alt = 'back';
+      back.appendChild(img);
+    } else {
+      back.textContent = '★';
+      back.style.fontSize = '28px';
+    }
+
+    c.appendChild(front);
+    c.appendChild(back);
+
+    if(revealed[i]) c.classList.add('flipped');
+
+    c.addEventListener('click', onCardClick);
+    boardEl.appendChild(c);
+  }
+}
+
+// handle click
+function onCardClick(e){
+  if(lock) return;
+  const idx = Number(this.dataset.index);
+  if(revealed[idx]) return;
+
+  if(!timerRunning) startTimer();
+
+  // flip
+  revealCard(idx);
+
+  if(first === -1){
+    first = idx;
+    return;
+  }
+
+  // second card
+  moves++;
+  movesEl.textContent = moves;
+  lock = true;
+
+  if(cards[first] === cards[idx]){
+    // match
+    revealed[first] = true;
+    revealed[idx] = true;
+    matched++;
+    // keep flipped (already flipped visually)
+    setTimeout(()=> {
+      // mark as locked so cannot click further on those
+      const el1 = boardEl.querySelector(`.card[data-index="${first}"]`);
+      const el2 = boardEl.querySelector(`.card[data-index="${idx}"]`);
+      if(el1) el1.classList.add('locked');
+      if(el2) el2.classList.add('locked');
+
+      first = -1;
+      lock = false;
+
+      if(matched === PAIRS) {
+        stopTimer();
+        setTimeout(()=> alertMessage(), 300);
+      }
+    }, 300);
+  } else {
+    // not match: show, then hide
+    setTimeout(()=> {
+      hideCard(first);
+      hideCard(idx);
+      first = -1;
+      lock = false;
+    }, 700);
+  }
+}
+
+function revealCard(i){
+  revealed[i] = true;
+  const el = boardEl.querySelector(`.card[data-index="${i}"]`);
+  if(el) el.classList.add('flipped');
+}
+
+function hideCard(i){
+  revealed[i] = false;
+  const el = boardEl.querySelector(`.card[data-index="${i}"]`);
+  if(el) el.classList.remove('flipped');
+}
+
+function alertMessage(){
+  const time = timeEl.textContent;
+  setTimeout(()=> {
+    alert(`Chúc mừng — bạn thắng!\nMoves: ${moves}\nTime: ${time}`);
+  }, 50);
+}
+
+/* Timer */
+let timerInterval = null;
+let timerStart = 0;
+let timerRunning = false;
+function startTimer(){
+  if(timerRunning) return;
+  timerRunning = true;
+  timerStart = Date.now();
+  timerInterval = setInterval(updateTimer, 500);
+}
+function updateTimer(){
+  const diff = Date.now() - timerStart;
+  const s = Math.floor(diff / 1000);
+  const mm = String(Math.floor(s / 60)).padStart(2,'0');
+  const ss = String(s % 60).padStart(2,'0');
+  timeEl.textContent = `${mm}:${ss}`;
+}
+function stopTimer(){
+  timerRunning = false;
+  clearInterval(timerInterval);
+  timerInterval = null;
+}
+function resetTimer(){
+  stopTimer();
+  timeEl.textContent = '00:00';
+}
+
+/* Restart */
+restartBtn.addEventListener('click', async () => {
+  // small animation: flip all down
+  const cardsEls = boardEl.querySelectorAll('.card');
+  cardsEls.forEach(c => { c.classList.remove('locked'); c.classList.remove('flipped'); });
+  await sleep(120);
+  init();
+});
+
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+// initialize on load
+init();
+</script>
+</body>
+</html>
